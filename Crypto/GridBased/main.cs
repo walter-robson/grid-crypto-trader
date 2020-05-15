@@ -87,5 +87,25 @@ public class Nbbo
     public event dgNbboChange OnNbboUpdated;
 
 }
+//NbboListener Class using library from 
+// https://github.com/dougdellolio/coinbasepro-csharp
+public Nbbo NbboListener_CBP() //CBP: coin base pro
+{
+
+}
 
 //we'll probably need to save market data for later use, lets make a class to do that
+public void RecordNbbos()
+{
+    var nbboListener = new NbboListener_CBP();
+    nbboListener.OnNbboUpdated += NbboListener_OnNbboUpdated;
+
+    task t = new Task(nbboListener.Start);
+    t.Start();
+
+}
+    private void NbboListener_OnNbboUpdated(Nbbo nbbo)
+    {
+        Console.WriteLine(nbbo.ToString());
+        System.IO.File.AppendAllText($"nbbo_{nbbo.Time:yyyyMMdd}.cbp.csv", nbbo.ToString() + Enviornment.NewLine);
+    }
