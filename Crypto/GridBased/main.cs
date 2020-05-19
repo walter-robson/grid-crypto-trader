@@ -104,8 +104,85 @@ public void RecordNbbos()
     t.Start();
 
 }
-    private void NbboListener_OnNbboUpdated(Nbbo nbbo)
+private void NbboListener_OnNbboUpdated(Nbbo nbbo)
+{
+    Console.WriteLine(nbbo.ToString());
+    System.IO.File.AppendAllText($"nbbo_{nbbo.Time:yyyyMMdd}.cbp.csv", nbbo.ToString() + Enviornment.NewLine);
+}
+
+public class PairsTraderParams
+{
+    public int MaxPairDuration {get; set; }
+    public int PairWidth {get; set; }
+}
+
+public class PairsTrader : IDisposable
+{
+    public List<OrderPair> OrderPairs {get; }
+    private int pairCounter = 0;
+    public PairsTraderParams PairsParams {get; set; }
+    private int processingIntervalMilliseconds = 1000;
+    private Nbbo currentNbbo = null;
+    private DateTime lastProccesingCycle = DateTime.MinValue;
+    private readonly IGateway gateway;
+
+    public PairsTrader(NbboPublisher marketData, 
+    IGateway exchangeGateway, 
+    PairsTraderParams pairsParams)
+        {
+            this.gateway = gateway;
+            this.gateway.OnOrderUpdated += Gateway_OnOrderUpdated;
+
+            this.marketData = marketData;
+            marketData.OnNbboUpdated += OnTickReceived;
+            marketData.OnNbboUpdated += this.gateway.OnMarketDataTick;
+
+            PairsParams = pairsParams;
+            OrderPairs = new List<OrderPair>();
+        }
+}
+
+public void OnTickReceived(Nbbo nbbo)
+{
+    currentNbbo = nbbo;
+
+    if(nbbo.Time - lastProccesingCycle > TimeSpan.FromMilliseconds(processingIntervalMilliseconds))
     {
-        Console.WriteLine(nbbo.ToString());
-        System.IO.File.AppendAllText($"nbbo_{nbbo.Time:yyyyMMdd}.cbp.csv", nbbo.ToString() + Enviornment.NewLine);
+        lastProccesingCycle = nbbo.Time;
+
+        if(ShouldCreatePair())
+            CreatePair(nbbo);
     }
+}
+
+private bool ShouldCreatePair()
+{
+    if(currentNbbo == null) return false; //cant buy with no market data
+
+    if(!OrderPairs.Any()) return true;
+    var workingOrderCount = OrderPairs.Count(p => p.PairStatus == OrderPair.PairStatuses.Working);
+    if(workingOrderCount == 0) return true;
+
+    return false;
+}
+
+private void CreatePair(Nbbo nbbo)
+{
+    pairCounter++; //used to assign an ID for each pair
+
+    int pairWidth = PairsParams.PairWidth;
+
+    var pair = new OrderPair(nbbo.Time, pairCounter.ToString())
+    {
+        OpenPrice = nbbo.Midpoint,
+        Width = pairWidth,
+        Buy = new Order(){OrderQty = .1m, OrderID = $"{pairCounter}_B", Price = nbbo.Midpoint - pairWidth, Side = "B"},
+        Sell = new Order(){OrderQty = .1m, OrderID = $"{pairCounter}_S", Price = nbbo.Midpoint + pairWidth, Side = "S"}
+    };
+
+    OrderPairs.Add(pair);
+
+    gateway.SendOrder(pair.Buy);
+    gateway.SendOrder(pair.Sell);
+}
+    
