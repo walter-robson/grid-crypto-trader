@@ -311,6 +311,6 @@ public class TestGateway : IGateway
         }
 
         filledMakerOrders.ForEach(f => makerOrders.Remove(f.OrderID) );
-        filledTakerOrders.ForEach(f => makerOrders.Remove(f.OrderID) );
+        filledTakerOrders.ForEach(f => takerOrders.Remove(f.OrderID) );
     }
 }
