@@ -186,3 +186,131 @@ private void CreatePair(Nbbo nbbo)
     gateway.SendOrder(pair.Sell);
 }
     
+public interface IGateway
+{
+    public void SendOrder(Order order);
+    public void CancelOrder(Order order);
+    public void MarketDataTick(Nbbo nbbo);
+    event GatewayBase.dgOrderUpdated OnOrderUpdated;
+
+}
+
+public class GatewayBase
+{
+    public delegate void dgOrderUpdated(Order order, DateTime updateTime);
+}
+
+public class Gateway_CBP : IGateway
+{
+    private CoinbaseProClient coinbaseProClient;
+    public Gateway_CBP()
+    {
+        var authenticator = new Authenticator([/*our API tokens will go here */]);
+        coinbaseProClient = new CoinbaseProClient(authenticator);
+    }
+
+    public event GatewayBase.dgOrderUpdated OnOrderUpdated;
+
+    public void CancelOrder(Order order)
+    {
+        coinbaseProClient.OrdersService.CancelOrder(order.PublicHandlerID)
+    }
+    public void OnMarketDataTick(Nbbo nbbo)
+    {
+        //we dont use this yet
+    }
+    public async void SendOrder(Order order)
+    {
+        await coinbaseProClient.OrdersService.PlaceLimitOrderAsync([/*order params here */]);
+
+    }
+    //option to insert a more complicated method to listen to CBP socket
+}
+
+public class TestGateway : IGateway
+{
+    private readonly Dictionary<string, Order> makerOrders = new Dictionary<string, Order>();
+    private readonly Dictionary<string, Order> takerOrders = new Dictionary<string, Order>();
+    private Nbbo priorNbbo = new Nbbo();
+
+    public event GatewayBase.dgOrderUpdated OnOrderUpdated;
+
+    public void SendOrder(Order order)
+    {
+        if(order.Price > 0 )
+        {
+            makerOrders[order.OrderID] = order;
+
+        }
+        else 
+        {
+            takerOrders[order.OrderID] = order;
+        }
+    }
+    public void CancelOrder(Order order)
+    {
+        makerOrders.Remove(order.OrderID);
+    }
+    public void OnMarketDataTick(Nbbo nboo)
+    {
+        /*check the processing interval, and dont bother processing if the prices are the same as at the last tick */
+        if(((Nbbo.Time - priorNbbo.Time) < TimeSpan.FromMilliseconds(1000)) 
+            || 
+            ((nbbo.Ask == priorNbbo.Ask) && (nbbo.Bid == priorNbbo.Bid)))
+        {
+            return;
+        }
+
+        priorNbbo = nbbo;
+
+        List<Order> filledMakerOrders = new List<Order>();
+        List<Order> filledTakerOrders = new List<Order>();
+
+        //check if this tick (nbbo point) satisfies a maker order
+        foreach(var order in makerOrders)
+        {
+            if(((order.Value.Side == "B") && (order.Value.Price > nbbo.Ask))
+                ||
+                ((order.Value.Side == "S") && (order.Value.Price < nbbo.Ask)))
+            {
+                order.Value.AvgPx = order.Value.Price;
+                decimal fillQty = GetFillQty(nbbo, order.Value);
+                order.Value.CumQty += fillQty;
+
+                if(order.Value.CumQty == order.Value.OrderQty)
+                {
+                    filledMakerOrders.Add(order.Value);
+                }
+                OnOrderUpdated?.Invoke(order.Value, nbbo.Time);
+            }
+        }
+
+        //Fill the taker orders
+        foreach(var order in takerOrders)
+        {
+            order.Value.AvgPx = (order.Value.Side == "B" ? nbbo.Ask : nbbo.Bid);
+            order.Value.CumQty += GetFillQty(nbbo, order.Value);
+            OnOrderUpdated?.Invoke(order.Value, nbbo.Time);
+
+            if(order.Value.CumQty == order.Value.OrderQty)
+            {
+                filledTakerOrders.Add(order.Value);
+            }
+
+        }
+        private decimal GetFillQty(Nbbo nbbo, Order order)
+        {
+            if(order.Side == "B")
+            {
+                return nbbo.AskSize > order.LeavesQty ? order.LeavesQty : nbbo.AskSize;
+            }
+            else 
+            {
+                return nbbo.AskSize > order.LeavesQty ? order.LeavesQty : nbbo.BidSize;
+            }
+        }
+
+        filledMakerOrders.ForEach(f => makerOrders.Remove(f.OrderID) );
+        filledTakerOrders.ForEach(f => makerOrders.Remove(f.OrderID) );
+    }
+}
